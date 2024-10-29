@@ -45,9 +45,18 @@ def capture_selected_area(x1, y1, x2, y2):
     # Display the captured image
     photo = ImageTk.PhotoImage(image)
     canvas.create_image(0, 0, anchor="nw", image=photo)
+    canvas.image = photo
     
+    # Global variables to store object selections
+    selected_objects = []
+    edge_mask = None
+    contours = []
+    gap_start_x = gap_start_y = 0
+    gap_rect = None
+
     # Add "Extract Objects" button below the image
     def extract_objects():
+        nonlocal edge_mask, contours
         print("Extract Objects button clicked")
         extract_button.config(state="disabled")  # Disable the button during processing
         
@@ -55,41 +64,19 @@ def capture_selected_area(x1, y1, x2, y2):
         bilateral_filtered = cv2.bilateralFilter(open_cv_image, 9, 75, 75)  # Preserve edges while reducing noise
         blurred = cv2.GaussianBlur(bilateral_filtered, (5, 5), 0)
         edges = cv2.Canny(blurred, 30, 100)  # Adjusted thresholds for better edge detection
-        _, thresh = cv2.threshold(edges, 127, 255, cv2.THRESH_BINARY)
         
-        # Step 2: Color Segmentation (HSV Filtering) + Morphological Operations
-        hsv = cv2.cvtColor(open_cv_image, cv2.COLOR_BGR2HSV)
-        lower_bound = np.array([0, 0, 0])
-        upper_bound = np.array([180, 255, 255])
-        mask = cv2.inRange(hsv, lower_bound, upper_bound)
-        kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (7, 7))  # Increased kernel size for better noise removal
-        mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel, iterations=2)  # Closing gaps
-        mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel, iterations=2)  # Removing small noise
+        # Store the edge mask for later use in selecting objects
+        edge_mask = edges
         
-        # Step 3: Watershed Algorithm with Marker-based Segmentation
-        dist_transform = cv2.distanceTransform(mask, cv2.DIST_L2, 5)
-        _, fg = cv2.threshold(dist_transform, 0.6 * dist_transform.max(), 255, 0)
-        fg = np.uint8(fg)
-        unknown = cv2.subtract(mask, fg)
-        _, markers = cv2.connectedComponents(fg)
-        markers = markers + 1
-        markers[unknown == 255] = 0
-        markers = cv2.watershed(open_cv_image, markers)
-        open_cv_image[markers == -1] = [0, 255, 0]
+        # Find contours from the edge mask
+        contours, _ = cv2.findContours(edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         
-        # Step 4: Final Refinement with GrabCut
-        rect = (10, 10, open_cv_image.shape[1] - 20, open_cv_image.shape[0] - 20)  # Define a rectangle for GrabCut
-        mask_init = np.zeros(open_cv_image.shape[:2], np.uint8)
-        mask_init[markers == 1] = cv2.GC_PR_FGD
-        mask_init[markers == 0] = cv2.GC_PR_BGD
-        bgd_model = np.zeros((1, 65), np.float64)
-        fgd_model = np.zeros((1, 65), np.float64)
-        cv2.grabCut(open_cv_image, mask_init, rect, bgd_model, fgd_model, 5, cv2.GC_INIT_WITH_RECT)
-        mask_final = np.where((mask_init == 2) | (mask_init == 0), 0, 1).astype('uint8')
-        result = open_cv_image * mask_final[:, :, np.newaxis]
+        # Create an edge overlay on the original image
+        edge_highlight = open_cv_image.copy()
+        cv2.drawContours(edge_highlight, contours, -1, (0, 255, 0), 2)  # Highlight edges in green
         
         # Convert back to PIL format for Tkinter
-        highlighted_pil = PilImage.fromarray(cv2.cvtColor(result, cv2.COLOR_BGR2RGB))
+        highlighted_pil = PilImage.fromarray(cv2.cvtColor(edge_highlight, cv2.COLOR_BGR2RGB))
         highlighted_photo = ImageTk.PhotoImage(highlighted_pil)
         
         # Update the canvas with the highlighted image
@@ -97,7 +84,97 @@ def capture_selected_area(x1, y1, x2, y2):
         canvas.image = highlighted_photo
         
         extract_button.config(state="normal")  # Re-enable the button after processing
+    
+    def close_gap(x1, y1, x2, y2):
+        # Process the area of the gap to close it using the edge detection algorithm
+        nonlocal edge_mask, contours
+        gap_area = open_cv_image[y1:y2, x1:x2]
+        blurred = cv2.GaussianBlur(gap_area, (5, 5), 0)
+        edges_local = cv2.Canny(blurred, 30, 100)
+        edge_mask[y1:y2, x1:x2] = edges_local
         
+        # Update contours after closing the gap
+        contours, _ = cv2.findContours(edge_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        
+        # Update the display with the newly closed gap
+        updated_image = open_cv_image.copy()
+        for obj in selected_objects:
+            cv2.drawContours(updated_image, [obj], -1, (255, 182, 193), 2)  # Highlight selected objects in bright baby blue
+        for contour in contours:
+            if contour not in selected_objects:
+                cv2.drawContours(updated_image, [contour], -1, (0, 255, 0), 2)  # Highlight non-selected objects in green
+        
+        # Convert to PIL format and update canvas
+        highlighted_pil = PilImage.fromarray(cv2.cvtColor(updated_image, cv2.COLOR_BGR2RGB))
+        highlighted_photo = ImageTk.PhotoImage(highlighted_pil)
+        canvas.create_image(0, 0, anchor="nw", image=highlighted_photo)
+        canvas.image = highlighted_photo
+    
+    def on_gap_selection(event):
+        nonlocal gap_start_x, gap_start_y, gap_rect
+        gap_start_x = event.x
+        gap_start_y = event.y
+        gap_rect = canvas.create_rectangle(gap_start_x, gap_start_y, gap_start_x, gap_start_y, outline="grey", width=2)
+    
+    def on_gap_drag(event):
+        nonlocal gap_rect
+        gap_end_x, gap_end_y = event.x, event.y
+        canvas.coords(gap_rect, gap_start_x, gap_start_y, gap_end_x, gap_end_y)
+    
+    def on_gap_release(event):
+        nonlocal gap_start_x, gap_start_y, gap_rect
+        gap_end_x, gap_end_y = event.x, event.y
+        canvas.delete(gap_rect)
+        gap_x1, gap_x2 = min(gap_start_x, gap_end_x), max(gap_start_x, gap_end_x)
+        gap_y1, gap_y2 = min(gap_start_y, gap_end_y), max(gap_start_y, gap_end_y)
+        close_gap(gap_x1, gap_y1, gap_x2, gap_y2)
+    
+    def on_remove_edges_selection(event):
+        nonlocal gap_start_x, gap_start_y, gap_rect
+        gap_start_x = event.x
+        gap_start_y = event.y
+        gap_rect = canvas.create_rectangle(gap_start_x, gap_start_y, gap_start_x, gap_start_y, outline="red", width=2)
+    
+    def on_remove_edges_drag(event):
+        nonlocal gap_rect
+        gap_end_x, gap_end_y = event.x, event.y
+        canvas.coords(gap_rect, gap_start_x, gap_start_y, gap_end_x, gap_end_y)
+    
+    def on_remove_edges_release(event):
+        nonlocal gap_start_x, gap_start_y, gap_rect, contours, edge_mask
+        gap_end_x, gap_end_y = event.x, event.y
+        canvas.delete(gap_rect)
+        gap_x1, gap_x2 = min(gap_start_x, gap_end_x), max(gap_start_x, gap_end_x)
+        gap_y1, gap_y2 = min(gap_start_y, gap_end_y), max(gap_start_y, gap_end_y)
+        
+        # Remove edges within the selected rectangle
+        edge_mask[gap_y1:gap_y2, gap_x1:gap_x2] = 0
+        
+        # Update contours after removing edges
+        contours, _ = cv2.findContours(edge_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        
+        # Update the display with the newly removed edges
+        updated_image = open_cv_image.copy()
+        for obj in selected_objects:
+            cv2.drawContours(updated_image, [obj], -1, (255, 182, 193), 2)  # Highlight selected objects in bright baby blue
+        for contour in contours:
+            if contour not in selected_objects:
+                cv2.drawContours(updated_image, [contour], -1, (0, 255, 0), 2)  # Highlight non-selected objects in green
+        
+        # Convert to PIL format and update canvas
+        highlighted_pil = PilImage.fromarray(cv2.cvtColor(updated_image, cv2.COLOR_BGR2RGB))
+        highlighted_photo = ImageTk.PhotoImage(highlighted_pil)
+        canvas.create_image(0, 0, anchor="nw", image=highlighted_photo)
+        canvas.image = highlighted_photo
+    
+    canvas.bind("<ButtonPress-1>", on_gap_selection)  # Left click to start selecting a gap
+    canvas.bind("<B1-Motion>", on_gap_drag)  # Drag to select the area of the gap
+    canvas.bind("<ButtonRelease-1>", on_gap_release)  # Release to close the gap
+    
+    canvas.bind("<ButtonPress-3>", on_remove_edges_selection)  # Right click to start selecting an area to remove edges
+    canvas.bind("<B3-Motion>", on_remove_edges_drag)  # Drag to select the area to remove edges
+    canvas.bind("<ButtonRelease-3>", on_remove_edges_release)  # Release to remove edges
+    
     extract_button = tk.Button(root, text="Extract Objects", command=extract_objects)
     extract_button.pack()
     
