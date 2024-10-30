@@ -13,6 +13,9 @@ import cv2
 import numpy as np
 import os
 from dotenv import load_dotenv
+import tempfile
+import io
+import win32clipboard
 
 # Load environment variables
 load_dotenv()
@@ -126,11 +129,6 @@ def capture_selected_area(x1, y1, x2, y2):
         edge_highlight = open_cv_image.copy()
         for contour in contours:
             cv2.drawContours(edge_highlight, [contour], -1, (0, 255, 0), 2)  # Highlight edges in green
-            if cv2.contourArea(contour) > 0:  # Check if contour forms a closed shape
-                overlay = np.zeros_like(open_cv_image, dtype=np.uint8)
-                cv2.drawContours(overlay, [contour], -1, (0, 255, 0), -1)  # Fill closed contours with green
-                alpha = 0.3  # Transparency factor
-                edge_highlight = cv2.addWeighted(overlay, alpha, edge_highlight, 1 - alpha, 0)
         
         # Save the state to history
         history.append(edge_highlight.copy())
@@ -159,11 +157,6 @@ def capture_selected_area(x1, y1, x2, y2):
             updated_image = open_cv_image.copy()
             for contour in contours:
                 cv2.drawContours(updated_image, [contour], -1, (0, 255, 0), 2)  # Highlight edges in green
-                if cv2.contourArea(contour) > 0:  # Check if contour forms a closed shape
-                    overlay = np.zeros_like(open_cv_image, dtype=np.uint8)
-                    cv2.drawContours(overlay, [contour], -1, (0, 255, 0), -1)  # Fill closed contours with transparent green
-                    alpha = 0.3  # Transparency factor
-                    updated_image = cv2.addWeighted(overlay, alpha, updated_image, 1 - alpha, 0)
             
             # Save the state to history
             history.append(updated_image.copy())
@@ -197,7 +190,76 @@ def capture_selected_area(x1, y1, x2, y2):
     
     extract_button = tk.Button(root, text="Extract Objects", command=extract_objects)
     extract_button.pack()
-    
+
+    # Add "Select Objects" button
+    def select_objects():
+        def on_hover(event):
+            x, y = event.x, event.y
+            for contour in contours:
+                if cv2.pointPolygonTest(contour, (x, y), False) >= 0:
+                    canvas.config(cursor="hand2")
+                    return
+            canvas.config(cursor="arrow")
+
+        def on_click(event):
+            x, y = event.x, event.y
+            for contour in contours:
+                if cv2.pointPolygonTest(contour, (x, y), False) >= 0:
+                    if contour not in selected_objects:
+                        selected_objects.append(contour)
+                        update_copy_button_state()
+                    return
+
+        def on_right_click(event):
+            x, y = event.x, event.y
+            for contour in selected_objects:
+                if cv2.pointPolygonTest(contour, (x, y), False) >= 0:
+                    selected_objects.remove(contour)
+                    update_copy_button_state()
+                    return
+
+        canvas.bind("<Motion>", on_hover)
+        canvas.bind("<ButtonPress-1>", on_click)
+        canvas.bind("<ButtonPress-3>", on_right_click)
+
+    select_objects_button = tk.Button(tools_panel, text="Select Objects", command=select_objects)
+    select_objects_button.pack(pady=10)
+
+    # Add "Copy Objects" button
+    def copy_objects():
+        if not selected_objects:
+            return
+        # Create an empty transparent image
+        copied_image = np.zeros((open_cv_image.shape[0], open_cv_image.shape[1], 4), dtype=np.uint8)
+        for contour in selected_objects:
+            mask = np.zeros_like(open_cv_image[:, :, 0], dtype=np.uint8)
+            cv2.drawContours(mask, [contour], -1, 255, -1)
+            # Copy RGB channels from the original image
+            for c in range(3):
+                copied_image[:, :, c] = cv2.bitwise_and(open_cv_image[:, :, c], open_cv_image[:, :, c], mask=mask)
+            # Set alpha channel based on mask
+            copied_image[:, :, 3] = mask
+        output = PilImage.fromarray(copied_image, 'RGBA')
+        output_buffer = io.BytesIO()
+        output.save(output_buffer, format='BMP')
+        data = output_buffer.getvalue()[14:]
+        output_buffer.close()
+
+        # Set the image to clipboard
+        win32clipboard.OpenClipboard()
+        win32clipboard.EmptyClipboard()
+        win32clipboard.SetClipboardData(win32clipboard.CF_DIB, data)
+        win32clipboard.CloseClipboard()
+
+    copy_button = tk.Button(tools_panel, text="Copy Objects", command=copy_objects, state="disabled")
+    copy_button.pack(pady=10)
+
+    def update_copy_button_state():
+        if selected_objects:
+            copy_button.config(state="normal")
+        else:
+            copy_button.config(state="disabled")
+
     # Start the GUI main loop
     root.mainloop()
 
