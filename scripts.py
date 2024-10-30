@@ -1,5 +1,6 @@
 import threading
 import tkinter as tk
+from tkinter import ttk
 from PIL import Image, ImageTk, ImageGrab
 import keyboard
 import pystray
@@ -18,6 +19,9 @@ load_dotenv()
 
 # Set DPI awareness to handle high DPI scaling
 ctypes.windll.shcore.SetProcessDpiAwareness(2)
+
+# Global list to store history of states for undo functionality
+history = []
 
 # Capture selected area and show image in GUI
 def capture_selected_area(x1, y1, x2, y2):
@@ -38,9 +42,16 @@ def capture_selected_area(x1, y1, x2, y2):
     root = tk.Tk()
     root.title("Snipped Image Viewer")
     
+    # Set up main frame with a vertical panel on the left
+    main_frame = tk.Frame(root)
+    main_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+
+    tools_panel = tk.Frame(main_frame, width=100, bg="lightgrey")
+    tools_panel.pack(side=tk.LEFT, fill=tk.Y)
+
     # Set up canvas to display the image
-    canvas = tk.Canvas(root, width=image.width, height=image.height)
-    canvas.pack()
+    canvas = tk.Canvas(main_frame, width=image.width, height=image.height)
+    canvas.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True)
     
     # Display the captured image
     photo = ImageTk.PhotoImage(image)
@@ -51,8 +62,48 @@ def capture_selected_area(x1, y1, x2, y2):
     selected_objects = []
     edge_mask = None
     contours = []
-    gap_start_x = gap_start_y = 0
-    gap_rect = None
+    circle_radius = 20
+
+    # Save the initial state to history for undo functionality
+    history.append(open_cv_image.copy())
+
+    # Function to update the canvas image
+    def update_canvas(updated_image):
+        highlighted_pil = PilImage.fromarray(cv2.cvtColor(updated_image, cv2.COLOR_BGR2RGB))
+        highlighted_photo = ImageTk.PhotoImage(highlighted_pil)
+        canvas.create_image(0, 0, anchor="nw", image=highlighted_photo)
+        canvas.image = highlighted_photo
+
+    # Undo functionality
+    def undo_last_action():
+        if len(history) > 1:
+            history.pop()  # Remove the last action
+            previous_state = history[-1]
+            update_canvas(previous_state)
+
+    # Add an Undo button to the tools panel
+    undo_button = tk.Button(tools_panel, text="Undo", command=undo_last_action)
+    undo_button.pack(pady=10)
+
+    # Tool selection for circular processing
+    def select_circle_tool():
+        canvas.config(cursor="none")  # Hide the default cursor
+        size_slider_frame.pack(side=tk.RIGHT, fill=tk.Y)
+        root.bind("<Motion>", draw_cursor_circle)  # Enable red circle cursor
+
+    circle_tool_button = tk.Button(tools_panel, text="Circle Tool", command=select_circle_tool)
+    circle_tool_button.pack(pady=10)
+
+    # Add a vertical slider to control the circle size
+    size_slider_frame = tk.Frame(root, width=100, bg="lightgrey")
+    size_slider_label = tk.Label(size_slider_frame, text="Circle Size")
+    size_slider_label.pack()
+    def update_circle_radius(value):
+        nonlocal circle_radius
+        circle_radius = value
+    size_slider = ttk.Scale(size_slider_frame, from_=5, to=100, orient="vertical", command=lambda v: update_circle_radius(int(float(v))))
+    size_slider.set(circle_radius)
+    size_slider.pack()
 
     # Add "Extract Objects" button below the image
     def extract_objects():
@@ -73,107 +124,76 @@ def capture_selected_area(x1, y1, x2, y2):
         
         # Create an edge overlay on the original image
         edge_highlight = open_cv_image.copy()
-        cv2.drawContours(edge_highlight, contours, -1, (0, 255, 0), 2)  # Highlight edges in green
+        for contour in contours:
+            cv2.drawContours(edge_highlight, [contour], -1, (0, 255, 0), 2)  # Highlight edges in green
+            if cv2.contourArea(contour) > 0:  # Check if contour forms a closed shape
+                overlay = np.zeros_like(open_cv_image, dtype=np.uint8)
+                cv2.drawContours(overlay, [contour], -1, (0, 255, 0), -1)  # Fill closed contours with green
+                alpha = 0.3  # Transparency factor
+                edge_highlight = cv2.addWeighted(overlay, alpha, edge_highlight, 1 - alpha, 0)
         
-        # Convert back to PIL format for Tkinter
-        highlighted_pil = PilImage.fromarray(cv2.cvtColor(edge_highlight, cv2.COLOR_BGR2RGB))
-        highlighted_photo = ImageTk.PhotoImage(highlighted_pil)
+        # Save the state to history
+        history.append(edge_highlight.copy())
         
         # Update the canvas with the highlighted image
-        canvas.create_image(0, 0, anchor="nw", image=highlighted_photo)
-        canvas.image = highlighted_photo
-        
+        update_canvas(edge_highlight)
         extract_button.config(state="normal")  # Re-enable the button after processing
     
-    def close_gap(x1, y1, x2, y2):
-        # Process the area of the gap to close it using the edge detection algorithm
+    def process_circle_area(x, y):
         nonlocal edge_mask, contours
-        gap_area = open_cv_image[y1:y2, x1:x2]
-        blurred = cv2.GaussianBlur(gap_area, (5, 5), 0)
+        # Define the circular region of interest
+        mask = np.zeros(open_cv_image.shape[:2], dtype=np.uint8)
+        cv2.circle(mask, (x, y), circle_radius, 255, -1)
+        
+        # Extract the region and process it
+        region = cv2.bitwise_and(open_cv_image, open_cv_image, mask=mask)
+        blurred = cv2.GaussianBlur(region, (5, 5), 0)
         edges_local = cv2.Canny(blurred, 30, 100)
-        edge_mask[y1:y2, x1:x2] = edges_local
-        
-        # Update contours after closing the gap
-        contours, _ = cv2.findContours(edge_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        
-        # Update the display with the newly closed gap
-        updated_image = open_cv_image.copy()
-        for obj in selected_objects:
-            cv2.drawContours(updated_image, [obj], -1, (255, 182, 193), 2)  # Highlight selected objects in bright baby blue
-        for contour in contours:
-            if contour not in selected_objects:
-                cv2.drawContours(updated_image, [contour], -1, (0, 255, 0), 2)  # Highlight non-selected objects in green
-        
-        # Convert to PIL format and update canvas
-        highlighted_pil = PilImage.fromarray(cv2.cvtColor(updated_image, cv2.COLOR_BGR2RGB))
-        highlighted_photo = ImageTk.PhotoImage(highlighted_pil)
-        canvas.create_image(0, 0, anchor="nw", image=highlighted_photo)
-        canvas.image = highlighted_photo
+        if np.any(edges_local):  # Only proceed if there are edges detected in the region
+            edge_mask = cv2.bitwise_or(edge_mask, edges_local) if edge_mask is not None else edges_local
+            
+            # Update contours after processing
+            contours, _ = cv2.findContours(edge_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+            
+            # Update the display with the newly processed area
+            updated_image = open_cv_image.copy()
+            for contour in contours:
+                cv2.drawContours(updated_image, [contour], -1, (0, 255, 0), 2)  # Highlight edges in green
+                if cv2.contourArea(contour) > 0:  # Check if contour forms a closed shape
+                    overlay = np.zeros_like(open_cv_image, dtype=np.uint8)
+                    cv2.drawContours(overlay, [contour], -1, (0, 255, 0), -1)  # Fill closed contours with transparent green
+                    alpha = 0.3  # Transparency factor
+                    updated_image = cv2.addWeighted(overlay, alpha, updated_image, 1 - alpha, 0)
+            
+            # Save the state to history
+            history.append(updated_image.copy())
+            
+            # Update the canvas
+            update_canvas(updated_image)
+
+    def on_circle_paint(event):
+        x, y = event.x, event.y
+        process_circle_area(x, y)
+        # Draw a circle cursor to indicate the current brush size
+        canvas.delete("cursor_circle")
+        canvas.create_oval(x - circle_radius, y - circle_radius, x + circle_radius, y + circle_radius, outline="red", width=2, tags="cursor_circle")
+
+    def on_circle_paint_end(event):
+        # Remove the circle cursor when mouse button is released
+        canvas.delete("cursor_circle")
+
+    # Bind mouse events to canvas for the circular tool
+    canvas.bind("<ButtonPress-1>", on_circle_paint)  # Left click to start processing
+    canvas.bind("<B1-Motion>", on_circle_paint)  # Drag to process continuously
+    canvas.bind("<ButtonRelease-1>", on_circle_paint_end)  # Remove circle cursor on release
     
-    def on_gap_selection(event):
-        nonlocal gap_start_x, gap_start_y, gap_rect
-        gap_start_x = event.x
-        gap_start_y = event.y
-        gap_rect = canvas.create_rectangle(gap_start_x, gap_start_y, gap_start_x, gap_start_y, outline="grey", width=2)
-    
-    def on_gap_drag(event):
-        nonlocal gap_rect
-        gap_end_x, gap_end_y = event.x, event.y
-        canvas.coords(gap_rect, gap_start_x, gap_start_y, gap_end_x, gap_end_y)
-    
-    def on_gap_release(event):
-        nonlocal gap_start_x, gap_start_y, gap_rect
-        gap_end_x, gap_end_y = event.x, event.y
-        canvas.delete(gap_rect)
-        gap_x1, gap_x2 = min(gap_start_x, gap_end_x), max(gap_start_x, gap_end_x)
-        gap_y1, gap_y2 = min(gap_start_y, gap_end_y), max(gap_start_y, gap_end_y)
-        close_gap(gap_x1, gap_y1, gap_x2, gap_y2)
-    
-    def on_remove_edges_selection(event):
-        nonlocal gap_start_x, gap_start_y, gap_rect
-        gap_start_x = event.x
-        gap_start_y = event.y
-        gap_rect = canvas.create_rectangle(gap_start_x, gap_start_y, gap_start_x, gap_start_y, outline="red", width=2)
-    
-    def on_remove_edges_drag(event):
-        nonlocal gap_rect
-        gap_end_x, gap_end_y = event.x, event.y
-        canvas.coords(gap_rect, gap_start_x, gap_start_y, gap_end_x, gap_end_y)
-    
-    def on_remove_edges_release(event):
-        nonlocal gap_start_x, gap_start_y, gap_rect, contours, edge_mask
-        gap_end_x, gap_end_y = event.x, event.y
-        canvas.delete(gap_rect)
-        gap_x1, gap_x2 = min(gap_start_x, gap_end_x), max(gap_start_x, gap_end_x)
-        gap_y1, gap_y2 = min(gap_start_y, gap_end_y), max(gap_start_y, gap_end_y)
-        
-        # Remove edges within the selected rectangle
-        edge_mask[gap_y1:gap_y2, gap_x1:gap_x2] = 0
-        
-        # Update contours after removing edges
-        contours, _ = cv2.findContours(edge_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        
-        # Update the display with the newly removed edges
-        updated_image = open_cv_image.copy()
-        for obj in selected_objects:
-            cv2.drawContours(updated_image, [obj], -1, (255, 182, 193), 2)  # Highlight selected objects in bright baby blue
-        for contour in contours:
-            if contour not in selected_objects:
-                cv2.drawContours(updated_image, [contour], -1, (0, 255, 0), 2)  # Highlight non-selected objects in green
-        
-        # Convert to PIL format and update canvas
-        highlighted_pil = PilImage.fromarray(cv2.cvtColor(updated_image, cv2.COLOR_BGR2RGB))
-        highlighted_photo = ImageTk.PhotoImage(highlighted_pil)
-        canvas.create_image(0, 0, anchor="nw", image=highlighted_photo)
-        canvas.image = highlighted_photo
-    
-    canvas.bind("<ButtonPress-1>", on_gap_selection)  # Left click to start selecting a gap
-    canvas.bind("<B1-Motion>", on_gap_drag)  # Drag to select the area of the gap
-    canvas.bind("<ButtonRelease-1>", on_gap_release)  # Release to close the gap
-    
-    canvas.bind("<ButtonPress-3>", on_remove_edges_selection)  # Right click to start selecting an area to remove edges
-    canvas.bind("<B3-Motion>", on_remove_edges_drag)  # Drag to select the area to remove edges
-    canvas.bind("<ButtonRelease-3>", on_remove_edges_release)  # Release to remove edges
+    # Draw the initial cursor circle only if the tool is selected
+    def draw_cursor_circle(event):
+        if size_slider_frame.winfo_ismapped():  # Only draw if the circle tool is active
+            canvas.delete("cursor_circle")
+            canvas.create_oval(event.x - circle_radius, event.y - circle_radius, event.x + circle_radius, event.y + circle_radius, outline="red", width=2, tags="cursor_circle")
+
+    canvas.bind("<Motion>", draw_cursor_circle)
     
     extract_button = tk.Button(root, text="Extract Objects", command=extract_objects)
     extract_button.pack()
