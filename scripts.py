@@ -90,6 +90,21 @@ def capture_selected_area(x1, y1, x2, y2):
         canvas.itemconfig(canvas_image_id, image=highlighted_photo)
         canvas.image = highlighted_photo
 
+    # Function to handle contour coloring and selection
+    def handle_contour_coloring(updated_image, selected_contours, all_contours):
+        overlay = updated_image.copy()
+        for contour in all_contours:
+            is_selected = any(np.array_equal(contour, selected) for selected in selected_contours)
+            color = (173, 216, 230) if is_selected else (0, 255, 0)  # Baby blue for selected objects, green for others
+            cv2.drawContours(overlay, [contour], -1, color, 2)
+            if cv2.contourArea(contour) > 100:
+                fill_color = (0, 255, 0, 128)  # Transparent green fill for closed contours
+                overlay_contour = overlay.copy()
+                cv2.drawContours(overlay_contour, [contour], -1, fill_color[:3], thickness=cv2.FILLED)
+                alpha = 0.5
+                cv2.addWeighted(overlay_contour, alpha, overlay, 1 - alpha, 0, overlay)
+        return overlay
+
     # Undo functionality
     def undo_last_action():
         if len(history) > 1:
@@ -166,11 +181,7 @@ def capture_selected_area(x1, y1, x2, y2):
         contours, _ = cv2.findContours(edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         
         # Create an edge overlay on the original image
-        edge_highlight = open_cv_image.copy()
-        for contour in contours:
-            cv2.drawContours(edge_highlight, [contour], -1, (0, 255, 0), 2)  # Highlight edges in green
-            if cv2.contourArea(contour) > 100:  # Fill closed contours with transparent green if they are larger than a threshold
-                overlay = edge_highlight.copy(); cv2.drawContours(overlay, [contour], -1, (0, 255, 0), thickness=cv2.FILLED); alpha = 0.5; cv2.addWeighted(overlay, alpha, edge_highlight, 1 - alpha, 0, edge_highlight)
+        edge_highlight = handle_contour_coloring(open_cv_image.copy(), selected_objects, contours)
         
         # Save the state to history
         history.append(edge_highlight.copy())
@@ -183,7 +194,7 @@ def capture_selected_area(x1, y1, x2, y2):
         nonlocal edge_mask, contours
         # Define the circular region of interest
         mask = np.zeros(open_cv_image.shape[:2], dtype=np.uint8)
-        cv2.circle(mask, (x, y), circle_radius - 4, 255, -1)  # Reduce the radius further to exclude border
+        cv2.circle(mask, (x, y), circle_radius - 4, 255, -1)
         
         # Extract the region below the circle
         region_edges = cv2.bitwise_and(edge_mask, mask) if edge_mask is not None else None
@@ -210,12 +221,7 @@ def capture_selected_area(x1, y1, x2, y2):
         contours, _ = cv2.findContours(edge_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         
         # Update the display with the newly processed area
-        updated_image = open_cv_image.copy()
-        for contour in contours:
-            color = (173, 216, 230) if contour in selected_objects else (0, 255, 0)
-            cv2.drawContours(updated_image, [contour], -1, color, 2)  # Highlight edges in green
-            if cv2.contourArea(contour) > 100:  # Fill closed contours with transparent green if they are larger than a threshold
-                overlay = updated_image.copy(); cv2.drawContours(overlay, [contour], -1, (0, 255, 0), thickness=cv2.FILLED); alpha = 0.5; cv2.addWeighted(overlay, alpha, updated_image, 1 - alpha, 0, updated_image)
+        updated_image = handle_contour_coloring(open_cv_image.copy(), selected_objects, contours)
         
         # Save the state to history
         history.append(updated_image.copy())
@@ -236,6 +242,7 @@ def capture_selected_area(x1, y1, x2, y2):
     def on_circle_paint(event):
         nonlocal mouse_pressed
         mouse_pressed = True
+        process_circle_area(event.x, event.y)
         continuously_process_circle_area(event)
 
     def on_circle_paint_release(event):
@@ -328,17 +335,20 @@ def capture_selected_area(x1, y1, x2, y2):
             x, y = event.x, event.y
             for contour in contours:
                 if cv2.pointPolygonTest(contour, (x, y), False) >= 0:
-                    if contour not in selected_objects:
+                    if not any(np.array_equal(contour, selected) for selected in selected_objects):
                         selected_objects.append(contour)
                         update_copy_button_state()
+                        update_selected_objects()
                     return
 
         def on_right_click(event):
+            nonlocal selected_objects
             x, y = event.x, event.y
             for contour in selected_objects:
                 if cv2.pointPolygonTest(contour, (x, y), False) >= 0:
-                    selected_objects.remove(contour)
+                    selected_objects = [c for c in selected_objects if not np.array_equal(c, contour)]
                     update_copy_button_state()
+                    update_selected_objects()
                     return
 
         canvas.bind("<Motion>", on_hover)
@@ -346,16 +356,7 @@ def capture_selected_area(x1, y1, x2, y2):
         canvas.bind("<ButtonPress-3>", on_right_click)
 
     def update_selected_objects():
-        updated_image = open_cv_image.copy()
-        for contour in contours:
-            color = (0, 255, 0) if contour not in selected_objects else (173, 216, 230)  # Baby blue for selected objects
-            cv2.drawContours(updated_image, [contour], -1,            color, 2)
-            if cv2.contourArea(contour) > 100:  # Fill closed contours with transparent green if they are larger than a threshold
-                if contour in selected_objects:
-                    overlay = updated_image.copy()
-                    cv2.drawContours(overlay, [contour], -1, (173, 216, 230), thickness=cv2.FILLED)
-                    alpha = 0.5
-                    cv2.addWeighted(overlay, alpha, updated_image, 1 - alpha, 0, updated_image)
+        updated_image = handle_contour_coloring(open_cv_image.copy(), selected_objects, contours)
         update_canvas(updated_image)
 
     select_objects_button = tk.Button(tools_panel, text="Select Objects", command=select_objects)
@@ -468,4 +469,3 @@ if __name__ == "__main__":
     keyboard.add_hotkey("ctrl+alt+q", lambda: os._exit(0))  # Forcefully terminate the program
     print("Running in the system tray. Press Ctrl+Alt+S to capture screen selection. Press Ctrl+Alt+Q to exit.")
     keyboard.wait("esc")
-
