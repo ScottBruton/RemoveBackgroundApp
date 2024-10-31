@@ -93,16 +93,25 @@ def capture_selected_area(x1, y1, x2, y2):
     # Function to handle contour coloring and selection
     def handle_contour_coloring(updated_image, selected_contours, all_contours):
         overlay = updated_image.copy()
-        for contour in all_contours:
-            is_selected = any(np.array_equal(contour, selected) for selected in selected_contours)
-            color = (173, 216, 230) if is_selected else (0, 255, 0)  # Baby blue for selected objects, green for others
+        # Draw selected contours first with blue color
+        for contour in selected_contours:
+            color = (173, 216, 230)  # Baby blue for selected objects
             cv2.drawContours(overlay, [contour], -1, color, 2)
             if cv2.contourArea(contour) > 100:
-                fill_color = (0, 255, 0, 128)  # Transparent green fill for closed contours
                 overlay_contour = overlay.copy()
-                cv2.drawContours(overlay_contour, [contour], -1, fill_color[:3], thickness=cv2.FILLED)
-                alpha = 0.5
+                cv2.drawContours(overlay_contour, [contour], -1, color, thickness=cv2.FILLED)
+                alpha = 0.4  # Higher alpha for selected contours
                 cv2.addWeighted(overlay_contour, alpha, overlay, 1 - alpha, 0, overlay)
+        # Draw non-selected contours with green color
+        for contour in all_contours:
+            if not any(np.array_equal(contour, selected) for selected in selected_contours):
+                color = (0, 255, 0)  # Green for non-selected objects
+                cv2.drawContours(overlay, [contour], -1, color, 2)
+                if cv2.contourArea(contour) > 100:
+                    overlay_contour = overlay.copy()
+                    cv2.drawContours(overlay_contour, [contour], -1, color, thickness=cv2.FILLED)
+                    alpha = 0.2  # Lower alpha for non-selected contours
+                    cv2.addWeighted(overlay_contour, alpha, overlay, 1 - alpha, 0, overlay)
         return overlay
 
     # Undo functionality
