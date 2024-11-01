@@ -17,34 +17,41 @@ import tempfile
 import io
 import win32clipboard
 from skimage.morphology import skeletonize  # For region growing and active contour approach
+from pathlib import Path
+import subprocess 
+from io import BytesIO
 
 # Load environment variables
 load_dotenv()
 
 # Set DPI awareness to handle high DPI scaling
 ctypes.windll.shcore.SetProcessDpiAwareness(2)
-
+original_snippet_image = None
 # Global list to store history of states for undo functionality
 history = []
 
 # Variable to adjust gap-filling level
 gap_filling_level = 3  # You can adjust this value to control the intensity of gap-filling
-
+original_image = None
 # Capture selected area and show image in GUI
 def capture_selected_area(x1, y1, x2, y2):
+    
     # Ensure the coordinates are in the correct order
     x1, x2 = min(x1, x2), max(x1, x2)
     y1, y2 = min(y1, y2), max(y1, y2)
-    
+    global original_image  # Use a global variable to store the original image
+    global original_snippet_image
+   
     # Add a small delay to ensure the screen is properly updated before capture
     time.sleep(0.2)
     
     # Grab the selected screen area
     image = ImageGrab.grab(bbox=(x1, y1, x2, y2)).convert("RGBA")
+    original_snippet_image = ImageGrab.grab(bbox=(x1, y1, x2, y2)).convert("RGBA")
     
     # Convert the image to an OpenCV format
     open_cv_image = cv2.cvtColor(np.array(image), cv2.COLOR_RGBA2BGR)
-    
+    original_image = open_cv_image.copy()
     # Initialize the GUI
     root = tk.Tk()
     root.title("Snipped Image Viewer")
@@ -95,7 +102,7 @@ def capture_selected_area(x1, y1, x2, y2):
         overlay = updated_image.copy()
         # Draw selected contours first with blue color
         for contour in selected_contours:
-            color = (173, 216, 230)  # Baby blue for selected objects
+            color = (230, 216, 173)  # Baby blue for selected objects
             cv2.drawContours(overlay, [contour], -1, color, 2)
             if cv2.contourArea(contour) > 100:
                 overlay_contour = overlay.copy()
@@ -371,31 +378,57 @@ def capture_selected_area(x1, y1, x2, y2):
     select_objects_button = tk.Button(tools_panel, text="Select Objects", command=select_objects)
     select_objects_button.pack(pady=10)
 
-    # Add "Copy Objects" button
-    def copy_objects():
-        if not selected_objects:
-            return
-        # Create an empty transparent image
-        copied_image = np.zeros((open_cv_image.shape[0], open_cv_image.shape[1], 4), dtype=np.uint8)
-        for contour in selected_objects:
-            mask = np.zeros_like(open_cv_image[:, :, 0], dtype=np.uint8)
-            cv2.drawContours(mask, [contour], -1, 255, -1)
-            # Copy RGB channels from the original image
-            for c in range(3):
-                copied_image[:, :, c] = cv2.bitwise_and(open_cv_image[:, :, c], open_cv_image[:, :, c], mask=mask)
-            # Set alpha channel based on mask
-            copied_image[:, :, 3] = mask
-        output = PilImage.fromarray(copied_image, 'RGBA')
-        output_buffer = io.BytesIO()
-        output.save(output_buffer, format='BMP')
-        data = output_buffer.getvalue()[14:]
-        output_buffer.close()
+    output_directory = Path.home() / "Downloads/Snippets"
+    output_directory.mkdir(parents=True, exist_ok=True)
 
-        # Set the image to clipboard
+# Copy image to clipboard function
+    def copy_image_to_clipboard(image):
+        output = BytesIO()
+        image.save(output, format="PNG")
+        data = output.getvalue()
         win32clipboard.OpenClipboard()
         win32clipboard.EmptyClipboard()
-        win32clipboard.SetClipboardData(win32clipboard.CF_DIB, data)
+        win32clipboard.SetClipboardData(win32clipboard.RegisterClipboardFormat("PNG"), data)
         win32clipboard.CloseClipboard()
+        print("Image copied to clipboard.")
+        return True
+
+    # Copy selected objects from the original image function
+    def copy_objects():
+         # Ensure we use the original, unprocessed snippet
+        if not selected_objects or original_snippet_image is None:
+            print("No objects selected or original image not available.")
+            return
+
+        # Convert the original snippet image to a NumPy array to work with OpenCV
+        image_copy = np.array(original_snippet_image).copy()  # This keeps the original RGB values
+        copied_image = cv2.cvtColor(image_copy, cv2.COLOR_RGBA2BGRA)  # Ensure BGRA format
+
+        # Create a mask initialized with zeros (black) for transparency
+        mask = np.zeros((copied_image.shape[0], copied_image.shape[1]), dtype=np.uint8)
+
+        # Draw the selected contours onto the mask to isolate selected objects
+        for contour in selected_objects:
+            cv2.drawContours(mask, [contour], -1, 255, -1)  # Fill selected areas with white in the mask
+
+        # Set the alpha channel based on the mask without modifying the RGB channels
+        alpha_channel = np.where(mask == 255, 255, 0).astype(np.uint8)  # Keep selected areas opaque, others transparent
+        copied_image[:, :, 3] = alpha_channel  # Apply the alpha channel mask
+
+        # Convert back to PIL format for saving as PNG with transparency
+        output_image = PilImage.fromarray(copied_image, 'RGBA')
+
+        # Define the output path and save the image
+        output_path = output_directory / "Copied_Object.png"
+        output_image.save(output_path, "PNG")
+        print(f"Image saved to {output_path} with transparency.")
+
+        # Wait briefly to ensure the file is saved before copying the image
+        time.sleep(0.1)
+
+        # Copy the image to the clipboard with transparency
+        copy_image_to_clipboard(output_image)
+
 
     copy_button = tk.Button(tools_panel, text="Copy Objects", command=copy_objects, state="disabled")
     copy_button.pack(pady=10)
