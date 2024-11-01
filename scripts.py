@@ -395,14 +395,16 @@ def capture_selected_area(x1, y1, x2, y2):
 
     # Copy selected objects from the original image function
     def copy_objects():
-         # Ensure we use the original, unprocessed snippet
+       # global original_snippet_image  # Use the stored original snippet image
         if not selected_objects or original_snippet_image is None:
             print("No objects selected or original image not available.")
             return
 
-        # Convert the original snippet image to a NumPy array to work with OpenCV
-        image_copy = np.array(original_snippet_image).copy()  # This keeps the original RGB values
-        copied_image = cv2.cvtColor(image_copy, cv2.COLOR_RGBA2BGRA)  # Ensure BGRA format
+        # Convert the original snippet image to a NumPy array to capture the original RGB values
+        image_rgb = np.array(original_snippet_image)[..., :3]  # Exclude any alpha channel if present
+
+        # Prepare an image with an alpha channel initialized to 255 (opaque by default)
+        copied_image = np.dstack((image_rgb, np.full(image_rgb.shape[:2], 255, dtype=np.uint8)))
 
         # Create a mask initialized with zeros (black) for transparency
         mask = np.zeros((copied_image.shape[0], copied_image.shape[1]), dtype=np.uint8)
@@ -413,7 +415,7 @@ def capture_selected_area(x1, y1, x2, y2):
 
         # Set the alpha channel based on the mask without modifying the RGB channels
         alpha_channel = np.where(mask == 255, 255, 0).astype(np.uint8)  # Keep selected areas opaque, others transparent
-        copied_image[:, :, 3] = alpha_channel  # Apply the alpha channel mask
+        copied_image[..., 3] = alpha_channel  # Apply the alpha channel mask
 
         # Convert back to PIL format for saving as PNG with transparency
         output_image = PilImage.fromarray(copied_image, 'RGBA')
@@ -428,6 +430,8 @@ def capture_selected_area(x1, y1, x2, y2):
 
         # Copy the image to the clipboard with transparency
         copy_image_to_clipboard(output_image)
+
+
 
 
     copy_button = tk.Button(tools_panel, text="Copy Objects", command=copy_objects, state="disabled")
