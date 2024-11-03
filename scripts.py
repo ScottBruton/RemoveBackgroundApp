@@ -22,6 +22,7 @@ import subprocess
 from io import BytesIO
 import appState
 from AddEdges import AddEdges
+from appState import get_gap_filling_level, set_gap_filling_level
 
 
 # Load environment variables
@@ -36,7 +37,7 @@ original_snippet_image = None
 history = []
 
 # Variable to adjust gap-filling level
-gap_filling_level = 3  # You can adjust this value to control the intensity of gap-filling
+gap_filling_level = get_gap_filling_level() # You can adjust this value to control the intensity of gap-filling
 original_image = None
 # Capture selected area and show image in GUI
 def capture_selected_area(x1, y1, x2, y2):
@@ -62,7 +63,7 @@ def capture_selected_area(x1, y1, x2, y2):
     # Initialize the GUI
     root = tk.Tk()
     root.title("Snipped Image Viewer")
-    
+
     # Set up main frame with a vertical panel on the left
     main_frame = tk.Frame(root)
     main_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
@@ -78,12 +79,12 @@ def capture_selected_area(x1, y1, x2, y2):
     vbar.pack(side=tk.RIGHT, fill=tk.Y)
     canvas.config(xscrollcommand=hbar.set, yscrollcommand=vbar.set)
     canvas.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True)
-    
+
     # Display the captured image
     photo = ImageTk.PhotoImage(image)
     canvas_image_id = canvas.create_image(0, 0, anchor="nw", image=photo)
     canvas.image = photo
-    
+
     # Global variables to store object selections
     selected_objects = []
     edge_mask = None
@@ -136,18 +137,20 @@ def capture_selected_area(x1, y1, x2, y2):
         canvas.itemconfig(canvas_image_id, image=updated_photo)
         canvas.image = updated_photo
 
-    
-    # Initialize the AddEdges tool before creating the button
-# Initialize the AddEdges tool before creating the button
-    add_edges_tool = AddEdges(root, canvas, open_cv_image, update_canvas, history, appState.selected_edges)
 
+    
+
+
+    find_edges_button = tk.Button(tools_panel, text="Find Edges", state="disabled")
+    find_edges_button.pack(pady=10)
+
+    # Initialize the AddEdges tool before creating the button
+    # Initialize the AddEdges tool before creating the button
+    add_edges_tool = AddEdges(root, canvas, open_cv_image, update_canvas, history, appState.selected_edges, find_edges_button)
 
     # Now create the button and set its command to the AddEdges method
     add_edges_button = tk.Button(tools_panel, text="Add Edges", command=add_edges_tool.select_add_edges_tool)
     add_edges_button.pack(pady=10)
-
-    appState.find_edges_button = tk.Button(tools_panel, text="Find Edges", state="disabled")
-    appState.find_edges_button.pack(pady=10)
 
     # Undo functionality
     def undo_last_action():
@@ -159,12 +162,6 @@ def capture_selected_area(x1, y1, x2, y2):
     # Add an Undo button to the tools panel
     undo_button = tk.Button(tools_panel, text="Undo", command=undo_last_action)
     undo_button.pack(pady=10)
-
-
-
-
-
-
 
     # Tool selection for circular processing
     def select_circle_tool():
@@ -200,18 +197,28 @@ def capture_selected_area(x1, y1, x2, y2):
     size_slider.pack()
 
     # Add a vertical slider to control the gap filling level
+    # Add a vertical slider to control the gap filling level
     gap_filling_slider_frame = tk.Frame(root, width=100, bg="lightgrey")
     gap_filling_slider_label = tk.Label(gap_filling_slider_frame, text="Gap Filling Level")
     gap_filling_slider_label.pack()
     gap_filling_slider_value = tk.Label(gap_filling_slider_frame, text=str(gap_filling_level))
     gap_filling_slider_value.pack()
+
     def update_gap_filling_level(value):
         global gap_filling_level
         gap_filling_level = int(float(value))
         gap_filling_slider_value.config(text=str(gap_filling_level))
-    gap_filling_slider = ttk.Scale(gap_filling_slider_frame, from_=1, to=10, orient="vertical", command=lambda v: update_gap_filling_level(v))
+        set_gap_filling_level(gap_filling_level)  # Update in appState
+
+    gap_filling_slider = ttk.Scale(
+        gap_filling_slider_frame, 
+        from_=1, to=10, 
+        orient="vertical", 
+        command=lambda v: update_gap_filling_level(v)
+    )
     gap_filling_slider.set(gap_filling_level)
     gap_filling_slider.pack()
+
 
     # Add "Extract Objects" button below the image
     def extract_objects():
@@ -236,7 +243,7 @@ def capture_selected_area(x1, y1, x2, y2):
 
         appState.selected_edges.clear()
         appState.selected_edges.extend(edge_highlight)
-        print("Selected edges have been updated:", appState.selected_edges)
+        #print("Selected edges have been updated:", appState.selected_edges)
 
         # Save the state to history
         history.append(edge_highlight.copy())
@@ -280,7 +287,7 @@ def capture_selected_area(x1, y1, x2, y2):
         
         appState.selected_edges.clear()
         appState.selected_edges.extend(skeleton)
-        print("Selected edges have been updated:", appState.selected_edges)
+       # print("Selected edges have been updated:", appState.selected_edges)
 
         # Save the state to history
         history.append(updated_image.copy())
@@ -518,7 +525,7 @@ def select_area():
         nonlocal start_x, start_y, rect
         start_x = event.x_root
         start_y = event.y_root
-        print(f"Mouse down at: ({event.x_root}, {event.y_root}) -> Start: ({start_x}, {start_y})")
+       # print(f"Mouse down at: ({event.x_root}, {event.y_root}) -> Start: ({start_x}, {start_y})")
         if rect:
             canvas.delete(rect)
         rect = canvas.create_rectangle(start_x, start_y, start_x, start_y, outline="red", width=2)
@@ -527,13 +534,13 @@ def select_area():
         nonlocal rect, end_x, end_y
         end_x = event.x_root
         end_y = event.y_root
-        print(f"Mouse drag at: ({event.x_root}, {event.y_root}) -> Current: ({end_x}, {end_y})")
+      #  print(f"Mouse drag at: ({event.x_root}, {event.y_root}) -> Current: ({end_x}, {end_y})")
         if rect:
             canvas.delete(rect)
         rect = canvas.create_rectangle(start_x, start_y, end_x, end_y, outline="red", width=2)
 
     def on_mouse_up(event):
-        print(f"Mouse up at: ({event.x_root}, {event.y_root}) -> Final rectangle: ({start_x}, {start_y}, {end_x}, {end_y})")
+      #  print(f"Mouse up at: ({event.x_root}, {event.y_root}) -> Final rectangle: ({start_x}, {start_y}, {end_x}, {end_y})")
         root.quit()
         root.destroy()
         capture_selected_area(start_x, start_y, end_x, end_y)
