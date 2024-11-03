@@ -20,9 +20,14 @@ from skimage.morphology import skeletonize  # For region growing and active cont
 from pathlib import Path
 import subprocess 
 from io import BytesIO
+import appState
+from AddEdges import AddEdges
+
 
 # Load environment variables
 load_dotenv()
+
+
 
 # Set DPI awareness to handle high DPI scaling
 ctypes.windll.shcore.SetProcessDpiAwareness(2)
@@ -35,6 +40,8 @@ gap_filling_level = 3  # You can adjust this value to control the intensity of g
 original_image = None
 # Capture selected area and show image in GUI
 def capture_selected_area(x1, y1, x2, y2):
+
+
     
     # Ensure the coordinates are in the correct order
     x1, x2 = min(x1, x2), max(x1, x2)
@@ -120,6 +127,27 @@ def capture_selected_area(x1, y1, x2, y2):
                     alpha = 0.2  # Lower alpha for non-selected contours
                     cv2.addWeighted(overlay_contour, alpha, overlay, 1 - alpha, 0, overlay)
         return overlay
+    def update_canvas(updated_image):
+        # Convert the updated OpenCV image to PIL format
+        updated_pil_image = Image.fromarray(cv2.cvtColor(updated_image, cv2.COLOR_BGR2RGB))
+        updated_photo = ImageTk.PhotoImage(updated_pil_image)
+
+        # Update the canvas with the new image
+        canvas.itemconfig(canvas_image_id, image=updated_photo)
+        canvas.image = updated_photo
+
+    
+    # Initialize the AddEdges tool before creating the button
+# Initialize the AddEdges tool before creating the button
+    add_edges_tool = AddEdges(root, canvas, open_cv_image, update_canvas, history, appState.selected_edges)
+
+
+    # Now create the button and set its command to the AddEdges method
+    add_edges_button = tk.Button(tools_panel, text="Add Edges", command=add_edges_tool.select_add_edges_tool)
+    add_edges_button.pack(pady=10)
+
+    appState.find_edges_button = tk.Button(tools_panel, text="Find Edges", state="disabled")
+    appState.find_edges_button.pack(pady=10)
 
     # Undo functionality
     def undo_last_action():
@@ -131,6 +159,12 @@ def capture_selected_area(x1, y1, x2, y2):
     # Add an Undo button to the tools panel
     undo_button = tk.Button(tools_panel, text="Undo", command=undo_last_action)
     undo_button.pack(pady=10)
+
+
+
+
+
+
 
     # Tool selection for circular processing
     def select_circle_tool():
@@ -198,7 +232,12 @@ def capture_selected_area(x1, y1, x2, y2):
         
         # Create an edge overlay on the original image
         edge_highlight = handle_contour_coloring(open_cv_image.copy(), selected_objects, contours)
-        
+        appState.save_overlay(edge_highlight)
+
+        appState.selected_edges.clear()
+        appState.selected_edges.extend(edge_highlight)
+        print("Selected edges have been updated:", appState.selected_edges)
+
         # Save the state to history
         history.append(edge_highlight.copy())
         
@@ -239,11 +278,17 @@ def capture_selected_area(x1, y1, x2, y2):
         # Update the display with the newly processed area
         updated_image = handle_contour_coloring(open_cv_image.copy(), selected_objects, contours)
         
+        appState.selected_edges.clear()
+        appState.selected_edges.extend(skeleton)
+        print("Selected edges have been updated:", appState.selected_edges)
+
         # Save the state to history
         history.append(updated_image.copy())
         
+
         # Update the canvas
         update_canvas(updated_image)
+        appState.save_overlay(updated_image)
 
     def continuously_process_circle_area(event):
         x, y = event.x, event.y
@@ -327,6 +372,10 @@ def capture_selected_area(x1, y1, x2, y2):
     
     extract_button = tk.Button(root, text="Extract Objects", command=extract_objects)
     extract_button.pack()
+
+
+
+
 
     # Add "Select Objects" button
     def select_objects():
@@ -505,6 +554,12 @@ def run_tray():
     icon_image = PilImage.open("icon.ico")
     icon = pystray.Icon("NoBackgroundSnipper", icon_image, menu=pystray.Menu(item('Exit', on_exit)))
     icon.run()
+
+def save_overlay_to_app_state(self):
+    # Convert the current overlay to an image that can be saved in appState
+    appState.overlay_image = self.overlay.copy()
+    print("Overlay has been saved to appState.")
+
 
 # Start tray and set up hotkeys
 if __name__ == "__main__":
