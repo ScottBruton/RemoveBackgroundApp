@@ -1,2 +1,89 @@
 model/u2net.pth  
 model/* 
+
+# Ignore Python cache and compiled files
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.pdb
+
+# Ignore PIL generated cache files (if any)
+*.thumb
+*.cache
+
+# Ignore environment and module files
+.env
+*.env
+
+# Ignore Tkinter generated files (e.g., temporary and compiled files)
+*.log
+
+# Ignore temporary and miscellaneous files
+*.tmp
+tempfile/
+*.bak
+
+# Ignore virtual environment folders
+venv/
+env/
+.venv/
+.env/
+
+# Ignore system-specific files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Ignore application logs and debug files
+*.log
+logs/
+debug.log
+
+# Ignore files related to pystray icons
+*.ico
+
+# Ignore OpenCV and numpy build files
+*.so
+*.dll
+*.dylib
+*.lib
+*.a
+
+# Ignore files for compiled C extensions (OpenCV, etc.)
+*.o
+*.obj
+*.pyc
+
+# Ignore binary and clipboard artifacts
+*.bin
+clipboard/
+BytesIO/
+
+# Ignore misc system artifacts
+*.swp
+*.swo
+*.swn
+.idea/
+.vscode/
+
+# Ignore skimage generated cache files
+*.skimage-cache
+
+# Ignore subprocess output files
+subprocess_output.log
+*.out
+
+# Ignore Windows-specific clipboard and temp files
+win32clipboard.log
+
+# Ignore any other Python virtual environment or dependency management files
+poetry.lock
+Pipfile
+Pipfile.lock
+requirements.txt
+
+# Ignore paths containing `__pycache__` or `.cache`
+*/__pycache__/
+*/.cache/
+*/tempfile/
